@@ -2,8 +2,10 @@ console.log('Loading function');
 
 var aws = require('aws-sdk');
 var config = require('config');
+var http = require('http');
+var fs = require('fs');
 
-var githubUrl = "https://github.com";
+var githubUrl = "http://github.com";
 
 determineDestination = function(repoShort, fileName) {
     var destination = null
@@ -13,7 +15,9 @@ determineDestination = function(repoShort, fileName) {
             for(var i in repoObj.files) {
                 fileObj = repoObj.files[i]
                 if (fileName == fileObj.name) {
-                    return "s3://" + repoObj.bucket + "/" + repoObj.base_path + "/" + fileObj.dest;
+                    return {'bucket': repoObj.bucket,
+                            'key': (repoObj.base_path + "/" + fileObj.dest)
+                           }
                 }
             }
         }
@@ -22,7 +26,40 @@ determineDestination = function(repoShort, fileName) {
     return destination;
 }
 
-//console.log("Destination: " + determineDestination("hookshot", "test.sh"))
+copyToS3 = function(source, bucket, key) {
+
+    console.log("Transfering from: " + source);
+    console.log("To S3 Bucket: " + bucket);
+    console.log("With Key: "+ key);
+
+    var s3 = new aws.S3({params: {Bucket: bucket, Key: key}});
+
+    s3.createBucket(function(err) {
+        if (err) { console.log("Error: ", err); }
+        else {
+            s3.upload({Body: "Success!"}, function() {
+                console.log("Uploaded to " + bucket +"/"+key)
+            });
+        }
+
+        if (err) { console.log("Error: ", err); }
+        else {
+            var request = http.get(source, function(response) {
+                s3.upload({Body: response.pipe()}).
+                    on('httpUploadProgress', function(evt) { console.log(evt); }).
+                    send(function(err, data) { console.log(err, data) })
+            })
+        }
+    });
+
+}
+
+/* Local test
+testS3 = determineDestination("hookshot", "test.sh");
+testSource = ( githubUrl + "/NickDeClario/hookshot/blob/master/test.sh")
+console.log("Destination: " + testS3.key);
+var result = copyToS3(testSource, testS3.bucket, testS3.key);
+*/
 
 exports.handler = function(event, context) {
     
@@ -66,12 +103,13 @@ exports.handler = function(event, context) {
     }
     
     uploadFiles.forEach(function(value) {
-        console.log("Uploading: " + value.source + " ==> " + value.destination);
+        console.log("Uploading: " + value.source + " ==> " + value.destination.key);
+        var result = copyToS3(value.source, value.destination.bucket, value.destination.key);
     });
 
 
     removeFiles.forEach(function(value) {
-        console.log("Removing: " + value.source + " ==> " + value.destination);
+        console.log("Removing: " + value.source + " ==> " + value.destination.key);
     });
 
     context.succeed("Updated Repository: " + repository);
